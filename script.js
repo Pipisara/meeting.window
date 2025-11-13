@@ -184,21 +184,29 @@ function updateCurrentMeeting(meeting) {
     }
 }
 
-// Update upcoming meetings display
+// Carousel state
+let currentCarouselIndex = 0;
+let totalMeetings = 0;
+let carouselAutoAdvanceTimer = null;
+
+// Update upcoming meetings display with carousel
 function updateUpcomingMeetings(meetings) {
     const upcomingList = document.getElementById('upcomingList');
 
     if (!meetings || meetings.length === 0) {
         upcomingList.innerHTML = '<div class="no-upcoming">No more meetings scheduled for today</div>';
+        document.getElementById('carouselCounter').style.display = 'none';
         return;
     }
 
+    totalMeetings = meetings.length;
+    currentCarouselIndex = 0;
+
     let html = '';
     meetings.forEach((meeting, index) => {
-        const isNext = index === 0;
         const m = normalizeMeeting(meeting);
         html += `
-            <div class="upcoming-item ${isNext ? 'next-meeting' : ''}">
+            <div class="upcoming-item ${index === 0 ? 'active' : ''}">
                 <div class="upcoming-header">
                     <div class="upcoming-title">${escapeHtml(m.title)}</div>
                     <div class="upcoming-time">${formatTimeRange(m.startDate, m.endDate)}</div>
@@ -226,6 +234,90 @@ function updateUpcomingMeetings(meetings) {
     });
 
     upcomingList.innerHTML = html;
+    
+    // Show counter and update it
+    document.getElementById('carouselCounter').style.display = 'block';
+    updateCarouselControls();
+    
+    // Start auto-advance carousel (change every 10 seconds)
+    startCarouselAutoAdvance();
+    
+    // Add touch/swipe support for carousel
+    attachCarouselGestures();
+}
+
+// Update carousel counter
+function updateCarouselControls() {
+    document.getElementById('currentCount').textContent = currentCarouselIndex + 1;
+    document.getElementById('totalCount').textContent = totalMeetings;
+}
+
+// Show specific carousel slide
+function showCarouselSlide(index) {
+    if (index < 0 || index >= totalMeetings) return;
+    
+    const items = document.querySelectorAll('.upcoming-item');
+    items.forEach((item, i) => {
+        item.classList.remove('active', 'prev');
+        if (i === index) {
+            item.classList.add('active');
+        } else if (i < index) {
+            item.classList.add('prev');
+        }
+    });
+    
+    currentCarouselIndex = index;
+    updateCarouselControls();
+    
+    // Reset auto-advance timer
+    clearTimeout(carouselAutoAdvanceTimer);
+    startCarouselAutoAdvance();
+}
+
+// Navigate to next meeting automatically
+function autoAdvanceCarousel() {
+    const nextIndex = (currentCarouselIndex + 1) % totalMeetings;
+    showCarouselSlide(nextIndex);
+}
+
+// Start auto-advance carousel
+function startCarouselAutoAdvance() {
+    if (totalMeetings > 1) {
+        carouselAutoAdvanceTimer = setTimeout(autoAdvanceCarousel, 10000); // 10 seconds
+    }
+}
+
+// Attach touch/swipe gestures to carousel
+function attachCarouselGestures() {
+    const upcomingList = document.getElementById('upcomingList');
+    let touchStartX = 0;
+    let touchEndX = 0;
+
+    upcomingList.addEventListener('touchstart', (e) => {
+        touchStartX = e.changedTouches[0].screenX;
+    }, false);
+
+    upcomingList.addEventListener('touchend', (e) => {
+        touchEndX = e.changedTouches[0].screenX;
+        handleSwipe();
+    }, false);
+
+    function handleSwipe() {
+        const swipeThreshold = 50; // Minimum distance to trigger swipe
+        const diff = touchStartX - touchEndX;
+
+        if (Math.abs(diff) > swipeThreshold) {
+            if (diff > 0) {
+                // Swiped left - go to next
+                const nextIndex = (currentCarouselIndex + 1) % totalMeetings;
+                showCarouselSlide(nextIndex);
+            } else {
+                // Swiped right - go to previous
+                const prevIndex = (currentCarouselIndex - 1 + totalMeetings) % totalMeetings;
+                showCarouselSlide(prevIndex);
+            }
+        }
+    }
 }
 
 // Camera functions
