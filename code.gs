@@ -5,6 +5,7 @@
 // Enable Gmail API in Advanced Google Services
 // Version: 3.2 without ICS files
 // Last Updated: 2024-11-13
+// TIMEZONE: Asia/Kolkata (IST, GMT+5:30) - Used for all timestamp operations
 // ============================================================================
 
 /**
@@ -13,39 +14,54 @@
 function doGet(e) {
   try {
     const action = e && e.parameter && e.parameter.action ? e.parameter.action : 'bookings';
+    
     if (action === 'auth') {
       return handleAuthentication(e);
     }
+    
+    if (action === 'getRoomSchedule') {
+      return handleGetRoomSchedule(e);
+    }
+    
+    // Return all bookings
     const sheet = getOrCreateBookingsSheet();
-    const map = getHeaderMap(sheet);
     const data = sheet.getDataRange().getValues();
     const bookings = [];
+    
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
-      const idIdx = map['ID'];
-      if (idIdx === undefined || !row[idIdx]) continue;
+      if (!row[0]) continue;
+      
       bookings.push({
-        id: row[idIdx] || '',
-        room: map['Room'] !== undefined ? row[map['Room']] || '' : '',
-        roomKey: map['RoomKey'] !== undefined ? (row[map['RoomKey']] || '') : deriveRoomKey(map['Room'] !== undefined ? row[map['Room']] : ''),
-        title: map['Title'] !== undefined ? row[map['Title']] || '' : '',
-        start: map['Start'] !== undefined ? row[map['Start']] || '' : '',
-        end: map['End'] !== undefined ? row[map['End']] || '' : '',
-        bookedBy: map['Booked By'] !== undefined ? row[map['Booked By']] || '' : '',
-        note: map['Note'] !== undefined ? row[map['Note']] || '' : '',
-        participants: map['Participants'] !== undefined ? (row[map['Participants']] || '') : '',
-        emailSent: map['Email Sent'] !== undefined ? !!row[map['Email Sent']] : false,
-        createdBy: map['Created By'] !== undefined ? (row[map['Created By']] || '') : '',
-        updatedBy: map['Updated By'] !== undefined ? (row[map['Updated By']] || '') : '',
-        createdAt: map['Created At'] !== undefined ? (row[map['Created At']] || '') : '',
-        updatedAt: map['Updated At'] !== undefined ? (row[map['Updated At']] || '') : '',
-        authorizedBy: map['Authorized By'] !== undefined ? (row[map['Authorized By']] || '') : ''
+        id: row[0] || '',
+        room: row[1] || '',
+        roomKey: row[2] || '',
+        title: row[3] || '',
+        start: row[4] || '',
+        end: row[5] || '',
+        bookedBy: row[6] || '',
+        note: row[7] || '',
+        participants: row[8] || '',
+        emailSent: row[9] || false,
+        createdBy: row[10] || '',
+        updatedBy: row[11] || '',
+        createdAt: row[12] || '',
+        updatedAt: row[13] || ''
       });
     }
-    return ContentService.createTextOutput(JSON.stringify(bookings)).setMimeType(ContentService.MimeType.JSON);
+    
+    return ContentService
+      .createTextOutput(JSON.stringify(bookings))
+      .setMimeType(ContentService.MimeType.JSON);
+      
   } catch (error) {
     Logger.log('doGet Error: ' + error.toString());
-    return ContentService.createTextOutput(JSON.stringify({ error: error.toString(), message: 'Failed to retrieve data' })).setMimeType(ContentService.MimeType.JSON);
+    return ContentService
+      .createTextOutput(JSON.stringify({
+        error: error.toString(),
+        message: 'Failed to retrieve data'
+      }))
+      .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
@@ -54,6 +70,17 @@ function doGet(e) {
  */
 function doPost(e) {
   try {
+    // Validate that e and e.postData exist
+    if (!e || !e.postData || !e.postData.contents) {
+      Logger.log('doPost Error: Invalid request - missing event object or postData');
+      return ContentService
+        .createTextOutput(JSON.stringify({
+          status: 'error',
+          message: 'Invalid request - missing required data'
+        }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
     const booking = JSON.parse(e.postData.contents);
     const sheet = getOrCreateBookingsSheet();
     const action = booking.action || 'create';
@@ -113,6 +140,85 @@ function handleAuthentication(e) {
       .createTextOutput(JSON.stringify({ status: 'error', message: 'Invalid credentials' }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+/**
+ * Handle getting room schedule (for display boards)
+ */
+function handleGetRoomSchedule(e) {
+  const roomKey = e.parameter && e.parameter.room ? e.parameter.room : '';
+  
+  if (!roomKey) {
+    return ContentService
+      .createTextOutput(JSON.stringify({
+        status: 'error',
+        message: 'Room key is required'
+      }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  
+  const sheet = getOrCreateBookingsSheet();
+  const data = sheet.getDataRange().getValues();
+  const now = new Date();
+  
+  let currentMeeting = null;
+  const upcomingMeetings = [];
+  
+  // Filter bookings by room and time
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    
+    // Column indices based on: id, room, roomKey, title, start, end, bookedBy, note, participants, emailSent, createdBy, updatedBy, createdAt, updatedAt
+    const bookingRoomKey = row[2] || '';
+    
+    if (bookingRoomKey.toString() !== roomKey.toString()) {
+      continue;
+    }
+    
+    const start = new Date(row[4]);
+    const end = new Date(row[5]);
+    
+    // Check if meeting is currently active
+    if (now >= start && now < end) {
+      currentMeeting = {
+        id: row[0] || '',
+        room: row[1] || '',
+        roomKey: row[2] || '',
+        title: row[3] || '',
+        start: row[4] || '',
+        end: row[5] || '',
+        bookedBy: row[6] || '',
+        note: row[7] || '',
+        participants: row[8] || ''
+      };
+    }
+    // Check if meeting is in the future (today)
+    else if (now < start && start.toDateString() === now.toDateString()) {
+      upcomingMeetings.push({
+        id: row[0] || '',
+        room: row[1] || '',
+        roomKey: row[2] || '',
+        title: row[3] || '',
+        start: row[4] || '',
+        end: row[5] || '',
+        bookedBy: row[6] || '',
+        note: row[7] || '',
+        participants: row[8] || ''
+      });
+    }
+  }
+  
+  // Sort upcoming meetings by start time
+  upcomingMeetings.sort((a, b) => new Date(a.start) - new Date(b.start));
+  
+  return ContentService
+    .createTextOutput(JSON.stringify({
+      status: 'success',
+      currentMeeting: currentMeeting,
+      upcomingMeetings: upcomingMeetings,
+      timestamp: formatDateAsIST(now, 'yyyy-MM-dd HH:mm:ss')
+    }))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 /**
@@ -190,21 +296,6 @@ function getOrCreateBookingsSheet() {
   return sheet;
 }
 
-function getHeaderMap(sheet) {
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const map = {};
-  for (var i = 0; i < headers.length; i++) {
-    map[String(headers[i]).trim()] = i;
-  }
-  return map;
-}
-
-function deriveRoomKey(room) {
-  if (!room) return '';
-  const m = String(room).match(/Room\s*(\w+)/i);
-  return m ? m[1] : String(room).replace('Room ', '');
-}
-
 /**
  * Get or create Email Log sheet
  */
@@ -247,25 +338,27 @@ function getOrCreateEmailLogSheet() {
 function handleCreate(sheet, booking) {
   const now = new Date();
   const bookingId = now.getTime().toString();
+  
   Logger.log('Creating booking: ' + bookingId + ' - ' + booking.title);
-  const map = getHeaderMap(sheet);
-  const newRow = new Array(sheet.getLastColumn()).fill('');
-  if (map['ID'] !== undefined) newRow[map['ID']] = bookingId;
-  if (map['Room'] !== undefined) newRow[map['Room']] = booking.room || '';
-  if (map['RoomKey'] !== undefined) newRow[map['RoomKey']] = booking.roomKey || deriveRoomKey(booking.room || '');
-  if (map['Title'] !== undefined) newRow[map['Title']] = booking.title || 'Untitled Meeting';
-  if (map['Start'] !== undefined) newRow[map['Start']] = booking.start || '';
-  if (map['End'] !== undefined) newRow[map['End']] = booking.end || '';
-  if (map['Booked By'] !== undefined) newRow[map['Booked By']] = booking.bookedBy || '';
-  if (map['Note'] !== undefined) newRow[map['Note']] = booking.note || '';
-  if (map['Participants'] !== undefined) newRow[map['Participants']] = booking.participants || '';
-  if (map['Email Sent'] !== undefined) newRow[map['Email Sent']] = false;
-  if (map['Created By'] !== undefined) newRow[map['Created By']] = booking.createdBy || booking.bookedBy || '';
-  if (map['Updated By'] !== undefined) newRow[map['Updated By']] = '';
-  if (map['Created At'] !== undefined) newRow[map['Created At']] = now.toISOString();
-  if (map['Updated At'] !== undefined) newRow[map['Updated At']] = '';
-  if (map['Authorized By'] !== undefined) newRow[map['Authorized By']] = booking.authorizedBy || '';
-  sheet.appendRow(newRow);
+  
+  const emailSent = false;
+  
+  sheet.appendRow([
+    bookingId,
+    booking.room || '',
+    booking.roomKey || '',
+    booking.title || 'Untitled Meeting',
+    booking.start || '',
+    booking.end || '',
+    booking.bookedBy || '',
+    booking.note || '',
+    booking.participants || '',
+    emailSent,
+    booking.createdBy || booking.bookedBy || '',
+    '',
+    formatDateAsIST(now, 'yyyy-MM-dd HH:mm:ss'),
+    ''
+  ]);
   
   // Send email invitations if requested
   if (booking.sendEmail && booking.participants) {
@@ -274,14 +367,10 @@ function handleCreate(sheet, booking) {
       
       // Update email sent status
       const data = sheet.getDataRange().getValues();
-      const idIdx = map['ID'] !== undefined ? map['ID'] : 0;
-      const emailIdx = map['Email Sent'];
-      if (emailIdx !== undefined) {
-        for (let i = 1; i < data.length; i++) {
-          if (String(data[i][idIdx]) === String(bookingId)) {
-            sheet.getRange(i + 1, emailIdx + 1).setValue(true);
-            break;
-          }
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][0].toString() === bookingId.toString()) {
+          sheet.getRange(i + 1, 10).setValue(true);
+          break;
         }
       }
     } catch (emailError) {
@@ -307,52 +396,66 @@ function handleCreate(sheet, booking) {
  */
 function handleUpdate(sheet, booking) {
   const bookingId = booking.id || booking.originalId;
+  
   if (!bookingId) {
     Logger.log('Update failed: No booking ID provided');
-    return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: 'Booking ID is required for updates' })).setMimeType(ContentService.MimeType.JSON);
+    return ContentService
+      .createTextOutput(JSON.stringify({
+        status: 'error',
+        message: 'Booking ID is required for updates'
+      }))
+      .setMimeType(ContentService.MimeType.JSON);
   }
-  const map = getHeaderMap(sheet);
+  
   const data = sheet.getDataRange().getValues();
-  const idIdx = map['ID'] !== undefined ? map['ID'] : 0;
   let rowIndex = -1;
+  
   for (let i = 1; i < data.length; i++) {
-    if (String(data[i][idIdx]) === String(bookingId)) {
+    if (data[i][0].toString() === bookingId.toString()) {
       rowIndex = i + 1;
       break;
     }
   }
+  
   if (rowIndex === -1) {
     Logger.log('Update failed: Booking ' + bookingId + ' not found');
-    return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: 'Booking not found' })).setMimeType(ContentService.MimeType.JSON);
+    return ContentService
+      .createTextOutput(JSON.stringify({
+        status: 'error',
+        message: 'Booking not found'
+      }))
+      .setMimeType(ContentService.MimeType.JSON);
   }
+  
   Logger.log('Updating booking: ' + bookingId + ' at row ' + rowIndex);
+  
   const now = new Date();
-  const row = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const existingCreatedAt = map['Created At'] !== undefined ? row[map['Created At']] : '';
-  const existingCreatedBy = map['Created By'] !== undefined ? row[map['Created By']] : '';
-  const existingEmailSent = map['Email Sent'] !== undefined ? row[map['Email Sent']] : '';
-  if (map['ID'] !== undefined) row[map['ID']] = bookingId;
-  if (map['Room'] !== undefined) row[map['Room']] = booking.room || '';
-  if (map['RoomKey'] !== undefined) row[map['RoomKey']] = booking.roomKey || deriveRoomKey(booking.room || '');
-  if (map['Title'] !== undefined) row[map['Title']] = booking.title || 'Untitled Meeting';
-  if (map['Start'] !== undefined) row[map['Start']] = booking.start || '';
-  if (map['End'] !== undefined) row[map['End']] = booking.end || '';
-  if (map['Booked By'] !== undefined) row[map['Booked By']] = booking.bookedBy || '';
-  if (map['Note'] !== undefined) row[map['Note']] = booking.note || '';
-  if (map['Participants'] !== undefined) row[map['Participants']] = booking.participants || '';
-  if (map['Email Sent'] !== undefined) row[map['Email Sent']] = existingEmailSent;
-  if (map['Created By'] !== undefined) row[map['Created By']] = existingCreatedBy || '';
-  if (map['Updated By'] !== undefined) row[map['Updated By']] = booking.updatedBy || booking.submittedBy || '';
-  if (map['Created At'] !== undefined) row[map['Created At']] = existingCreatedAt || '';
-  if (map['Updated At'] !== undefined) row[map['Updated At']] = now.toISOString();
-  if (map['Authorized By'] !== undefined) row[map['Authorized By']] = booking.authorizedBy || row[map['Authorized By']] || '';
-  sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).setValues([row]);
+  const existingCreatedAt = data[rowIndex - 1][12];
+  const existingCreatedBy = data[rowIndex - 1][10];
+  const existingEmailSent = data[rowIndex - 1][9];
+  
+  sheet.getRange(rowIndex, 1, 1, 14).setValues([[
+    bookingId,
+    booking.room || '',
+    booking.roomKey || '',
+    booking.title || 'Untitled Meeting',
+    booking.start || '',
+    booking.end || '',
+    booking.bookedBy || '',
+    booking.note || '',
+    booking.participants || '',
+    existingEmailSent,
+    existingCreatedBy || '',
+    booking.updatedBy || booking.submittedBy || '',
+    existingCreatedAt || '',
+    formatDateAsIST(now, 'yyyy-MM-dd HH:mm:ss')
+  ]]);
   
   // Send updated invitation if requested
   if (booking.sendEmail && booking.participants) {
     try {
       sendMeetingInvitation(booking, bookingId, true);
-      if (map['Email Sent'] !== undefined) sheet.getRange(rowIndex, map['Email Sent'] + 1).setValue(true);
+      sheet.getRange(rowIndex, 10).setValue(true);
     } catch (emailError) {
       Logger.log('Email Error: ' + emailError.toString());
       logEmailError(bookingId, booking.title, '', 'Failed to send update', emailError.toString());
@@ -450,15 +553,16 @@ function sendMeetingInvitation(booking, bookingId, isUpdate) {
   const startDate = new Date(booking.start);
   const endDate = new Date(booking.end);
   
-  // Format dates for display
-  const formattedDate = Utilities.formatDate(startDate, Session.getScriptTimeZone(), 'EEEE, MMMM dd, yyyy');
-  const formattedStartTime = Utilities.formatDate(startDate, Session.getScriptTimeZone(), 'hh:mm a');
-  const formattedEndTime = Utilities.formatDate(endDate, Session.getScriptTimeZone(), 'hh:mm a');
+  // Format dates for display (GMT+5:30 / IST)
+  const IST_TIMEZONE = 'Asia/Kolkata';
+  const formattedDate = Utilities.formatDate(startDate, IST_TIMEZONE, 'EEEE, MMMM dd, yyyy');
+  const formattedStartTime = Utilities.formatDate(startDate, IST_TIMEZONE, 'hh:mm a');
+  const formattedEndTime = Utilities.formatDate(endDate, IST_TIMEZONE, 'hh:mm a');
   
   // Format dates for Google Calendar URL
-  const gcalDate = Utilities.formatDate(startDate, Session.getScriptTimeZone(), 'yyyyMMdd');
-  const gcalStartTime = Utilities.formatDate(startDate, Session.getScriptTimeZone(), 'HHmmss');
-  const gcalEndTime = Utilities.formatDate(endDate, Session.getScriptTimeZone(), 'HHmmss');
+  const gcalDate = Utilities.formatDate(startDate, IST_TIMEZONE, 'yyyyMMdd');
+  const gcalStartTime = Utilities.formatDate(startDate, IST_TIMEZONE, 'HHmmss');
+  const gcalEndTime = Utilities.formatDate(endDate, IST_TIMEZONE, 'HHmmss');
   
   const subject = (isUpdate ? '[UPDATED] ' : '') + 'Meeting Invitation: ' + booking.title;
   
@@ -502,8 +606,9 @@ function sendCancellationEmail(bookingData, bookingId, deletedBy) {
   if (emails.length === 0) return;
   
   const startDate = new Date(bookingData.start);
-  const formattedDate = Utilities.formatDate(startDate, Session.getScriptTimeZone(), 'EEEE, MMMM dd, yyyy');
-  const formattedStartTime = Utilities.formatDate(startDate, Session.getScriptTimeZone(), 'hh:mm a');
+  const IST_TIMEZONE = 'Asia/Kolkata';
+  const formattedDate = Utilities.formatDate(startDate, IST_TIMEZONE, 'EEEE, MMMM dd, yyyy');
+  const formattedStartTime = Utilities.formatDate(startDate, IST_TIMEZONE, 'hh:mm a');
   
   const subject = '[CANCELED] Meeting Canceled: ' + bookingData.title;
   
@@ -557,8 +662,7 @@ function getMeetingHtmlTemplate(isUpdate) {
           <!-- Header -->
           <tr>
             <td align="center" style="padding:20px;background:#2c5364;border-bottom:2px solid #00bcd4;">
-              <img src="//www.basilurtea.com/cdn/shop/files/Basilur.png" alt="Company Logo" width="60" style="display:block;margin-bottom:10px;">
-              <h1 style="color:#00bcd4;font-size:20px;margin:0;">${headerText}</h1>
+            <img src="https://www.basilurtea.com/cdn/shop/files/Basilur.png" alt="Company Logo" width="60" style="display:block;margin-bottom:10px;">              <h1 style="color:#00bcd4;font-size:20px;margin:0;">${headerText}</h1>
             </td>
           </tr>
 
@@ -642,7 +746,7 @@ function getCancellationHtmlTemplate() {
           <!-- Header -->
           <tr>
             <td align="center" style="padding:20px;background:#c62828;border-bottom:2px solid #ff5252;">
-              <img src="//www.basilurtea.com/cdn/shop/files/Basilur.png" alt="Company Logo" width="60" style="display:block;margin-bottom:10px;">
+              <img src="https://www.basilurtea.com/cdn/shop/files/Basilur.png" alt="Company Logo" width="60" style="display:block;margin-bottom:10px;">
               <h1 style="color:#ff5252;font-size:20px;margin:0;">&#10060; Meeting Canceled</h1>
             </td>
           </tr>
@@ -690,7 +794,7 @@ function getCancellationHtmlTemplate() {
 function logEmailSuccess(bookingId, meetingTitle, recipient, subject, status) {
   const emailLog = getOrCreateEmailLogSheet();
   emailLog.appendRow([
-    new Date().toISOString(),
+    formatDateAsIST(new Date(), 'yyyy-MM-dd HH:mm:ss'),
     bookingId,
     meetingTitle,
     recipient,
@@ -706,7 +810,7 @@ function logEmailSuccess(bookingId, meetingTitle, recipient, subject, status) {
 function logEmailError(bookingId, meetingTitle, recipient, subject, errorMessage) {
   const emailLog = getOrCreateEmailLogSheet();
   emailLog.appendRow([
-    new Date().toISOString(),
+    formatDateAsIST(new Date(), 'yyyy-MM-dd HH:mm:ss'),
     bookingId,
     meetingTitle,
     recipient,
@@ -788,11 +892,28 @@ function getBookingStats() {
     past: pastBookings,
     emailsSent: emailsSent,
     byRoom: roomStats,
-    generatedAt: now.toISOString()
+    generatedAt: formatDateAsIST(now, 'yyyy-MM-dd HH:mm:ss')
   };
   
   Logger.log(JSON.stringify(stats, null, 2));
   return stats;
+}
+
+/**
+ * Format date as IST (GMT+5:30) - Utility function
+ */
+function formatDateAsIST(dateInput, format) {
+  format = format || 'MM/dd/yyyy HH:mm:ss';
+  const IST_TIMEZONE = 'Asia/Kolkata';
+  const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  return Utilities.formatDate(date, IST_TIMEZONE, format);
+}
+
+/**
+ * Get current time in IST
+ */
+function getCurrentTimeIST() {
+  return formatDateAsIST(new Date(), 'yyyy-MM-dd\'T\'HH:mm:ss');
 }
 
 /**
@@ -840,127 +961,5 @@ function testCancellationEmail() {
 }
 
 // ============================================================================
-
 // END OF SCRIPT
 // ============================================================================
-function doGet(e) {
-  try {
-    const action = e && e.parameter && e.parameter.action ? e.parameter.action : 'bookings';
-    if (action === 'auth') {
-      return handleAuthentication(e);
-    }
-    if (action === 'getRoomSchedule') {
-      return handleGetRoomSchedule(e);
-    }
-    const sheet = getOrCreateBookingsSheet();
-    const data = sheet.getDataRange().getValues();
-    const bookings = [];
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      if (!row[0]) continue;
-      bookings.push({
-        id: row[0] || '',
-        room: row[1] || '',
-        roomKey: row[2] || '',
-        title: row[3] || '',
-        start: row[4] || '',
-        end: row[5] || '',
-        bookedBy: row[6] || '',
-        note: row[7] || '',
-        participants: row[8] || '',
-        emailSent: row[9] || false,
-        createdBy: row[10] || '',
-        updatedBy: row[11] || '',
-        createdAt: row[12] || '',
-        updatedAt: row[13] || ''
-      });
-    }
-    return ContentService
-      .createTextOutput(JSON.stringify(bookings))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (error) {
-    Logger.log('doGet Error: ' + error.toString());
-    return ContentService
-      .createTextOutput(JSON.stringify({
-        error: error.toString(),
-        message: 'Failed to retrieve data'
-      }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-}
-
-function handleGetRoomSchedule(e) {
-  const roomKeyParam = e && e.parameter && e.parameter.room ? String(e.parameter.room).trim() : '';
-  const roomKey = roomKeyParam.toUpperCase();
-  const sheet = getOrCreateBookingsSheet();
-  const data = sheet.getDataRange().getValues();
-  const now = new Date();
-  const tz = Session.getScriptTimeZone();
-  const todayStr = Utilities.formatDate(now, tz, 'yyyyMMdd');
-  const ROOM_NAMES = { A: 'BLOCK A BOARDROOM', B: 'BLOCK C BOARDROOM', C: 'BLOCK D AUDITORIUM' };
-  const targetRoomName = ROOM_NAMES[roomKey] || '';
-
-  const allSchedule = [];
-  const scheduleToday = [];
-
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    if (!row[0]) continue;
-
-    const rkCell = String(row[2] || '').trim().toUpperCase();
-    const roomNameCell = String(row[1] || '').trim();
-    const matchesRoom = roomKey
-      ? (rkCell === roomKey || (targetRoomName && roomNameCell.toLowerCase().indexOf(targetRoomName.toLowerCase()) !== -1))
-      : true;
-    if (!matchesRoom) continue;
-
-    const startCell = row[4];
-    const endCell = row[5];
-    const start = startCell instanceof Date ? startCell : new Date(startCell);
-    const end = endCell instanceof Date ? endCell : new Date(endCell);
-    if (isNaN(start) || isNaN(end)) continue;
-
-    const startStr = Utilities.formatDate(start, tz, 'yyyyMMdd');
-    const endStr = Utilities.formatDate(end, tz, 'yyyyMMdd');
-    const isToday = (startStr === todayStr) || (endStr === todayStr);
-
-    const item = {
-      id: row[0] || '',
-      room: roomNameCell || '',
-      roomKey: rkCell || '',
-      title: row[3] || '',
-      start: start instanceof Date ? start.toISOString() : String(startCell || ''),
-      end: end instanceof Date ? end.toISOString() : String(endCell || ''),
-      bookedBy: row[6] || '',
-      note: row[7] || '',
-      participants: row[8] || ''
-    };
-
-    allSchedule.push(item);
-    if (isToday) scheduleToday.push(item);
-  }
-
-  let currentMeeting = null;
-  for (let j = 0; j < allSchedule.length; j++) {
-    const s = new Date(allSchedule[j].start);
-    const eend = new Date(allSchedule[j].end);
-    if (now >= s && now < eend) {
-      if (!currentMeeting) {
-        currentMeeting = allSchedule[j];
-      } else {
-        const curEnd = new Date(currentMeeting.end);
-        if (eend < curEnd) currentMeeting = allSchedule[j];
-      }
-    }
-  }
-
-  const upcoming = [];
-  for (let k = 0; k < scheduleToday.length; k++) {
-    const s2 = new Date(scheduleToday[k].start);
-    if (s2 > now) upcoming.push(scheduleToday[k]);
-  }
-  upcoming.sort(function(a, b) { return new Date(a.start) - new Date(b.start); });
-
-  const result = { currentMeeting: currentMeeting, upcomingMeetings: upcoming };
-  return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
-}
