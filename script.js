@@ -1,10 +1,14 @@
 // Configuration
 const API_URL = 'https://script.google.com/macros/s/AKfycbwLrB5VTaqQp2XWELS8XGD13aOwx4753R5d5gMtk2PNIUT8Fivnu4wCTUCb-ltVowOm/exec';
 const REFRESH_INTERVAL = 60000; // 1 minute
+const CAROUSEL_AUTO_ADVANCE = 10000; // 10 seconds
 
 let currentRoomKey = '';
 let cameraStream = null;
 let refreshTimer = null;
+let carouselTimer = null;
+let currentCarouselIndex = 0;
+let totalMeetings = 0;
 
 // Timezone Configuration
 const IST_TIMEZONE = 'Asia/Kolkata'; // +5:30 GMT (Used in Sri Lanka)
@@ -16,8 +20,14 @@ const ROOM_NAMES = {
     'C': 'BLOCK D AUDITORIUM'
 };
 
-// Initialize on page load
+// ===========================
+// Initialization
+// ===========================
 document.addEventListener('DOMContentLoaded', () => {
+    initializeApp();
+});
+
+function initializeApp() {
     // Get room key from URL parameter
     const urlParams = new URLSearchParams(window.location.search);
     currentRoomKey = urlParams.get('room') || 'A';
@@ -29,28 +39,22 @@ document.addEventListener('DOMContentLoaded', () => {
     updateClock();
     setInterval(updateClock, 1000);
 
-    // Show loading state for status indicator until data loads
-    const statusIndicator = document.getElementById('statusIndicator');
-    if (statusIndicator) {
-        statusIndicator.classList.add('loading');
-        const stText = statusIndicator.querySelector('.status-text');
-        if (stText) stText.textContent = 'Loading...';
-    }
-
-    // Show loading placeholder for current meeting until data loads
-    const currentDisplay = document.getElementById('currentMeetingDisplay');
-    if (currentDisplay) {
-        currentDisplay.innerHTML = '<div class="loading-message">Loading current meeting...</div>';
-    }
+    // Set initial loading state
+    setLoadingState();
     
     // Initial load
     loadRoomSchedule();
     
     // Set up auto-refresh
     refreshTimer = setInterval(loadRoomSchedule, REFRESH_INTERVAL);
-});
+    
+    // Attach swipe gestures
+    attachSwipeGestures();
+}
 
-// Update clock display
+// ===========================
+// Clock Functions
+// ===========================
 function updateClock() {
     const now = new Date();
     const timeString = formatDateIST(now, 'time');
@@ -59,7 +63,9 @@ function updateClock() {
     document.getElementById('currentTime').textContent = `${dateString} • ${timeString}`;
 }
 
-// Load room schedule from backend
+// ===========================
+// Data Loading
+// ===========================
 async function loadRoomSchedule() {
     try {
         const url = `${API_URL}?action=getRoomSchedule&room=${currentRoomKey}`;
@@ -71,10 +77,8 @@ async function loadRoomSchedule() {
         
         const data = await response.json();
         
-        // Update current meeting
+        // Update displays
         updateCurrentMeeting(data.currentMeeting);
-        
-        // Update upcoming meetings
         updateUpcomingMeetings(data.upcomingMeetings);
         
         // Update last update time
@@ -87,20 +91,21 @@ async function loadRoomSchedule() {
     }
 }
 
-// Update current meeting display
+// ===========================
+// Current Meeting Display
+// ===========================
 function updateCurrentMeeting(meeting) {
     const displayContainer = document.getElementById('currentMeetingDisplay');
     const statusIndicator = document.getElementById('statusIndicator');
 
-    // Clear loading state as soon as we have meeting info
-    if (statusIndicator && statusIndicator.classList.contains('loading')) {
-        statusIndicator.classList.remove('loading');
-    }
+    // Clear loading state
+    statusIndicator.classList.remove('loading');
 
     if (meeting) {
-        // Normalize meeting row (supports array rows from the sheet or object payloads)
+        // Normalize meeting data
         const m = normalizeMeeting(meeting);
 
+        // Update status
         statusIndicator.classList.add('occupied');
         statusIndicator.querySelector('.status-text').textContent = 'In Use';
 
@@ -128,6 +133,7 @@ function updateCurrentMeeting(meeting) {
         const elapsed = now - start;
         const progressPercent = totalDuration > 0 ? Math.min(100, (elapsed / totalDuration) * 100) : 0;
 
+        // Render meeting display
         displayContainer.innerHTML = `
             <div class="meeting-active">
                 <div class="meeting-title">${escapeHtml(m.title)}</div>
@@ -167,7 +173,7 @@ function updateCurrentMeeting(meeting) {
             </div>
         `;
     } else {
-        // No meeting
+        // No meeting - room available
         statusIndicator.classList.remove('occupied');
         statusIndicator.querySelector('.status-text').textContent = 'Available';
 
@@ -184,18 +190,17 @@ function updateCurrentMeeting(meeting) {
     }
 }
 
-// Carousel state
-let currentCarouselIndex = 0;
-let totalMeetings = 0;
-let carouselAutoAdvanceTimer = null;
-
-// Update upcoming meetings display with carousel
+// ===========================
+// Upcoming Meetings Display
+// ===========================
 function updateUpcomingMeetings(meetings) {
     const upcomingList = document.getElementById('upcomingList');
+    const counterDiv = document.getElementById('carouselCounter');
 
     if (!meetings || meetings.length === 0) {
         upcomingList.innerHTML = '<div class="no-upcoming">No more meetings scheduled for today</div>';
-        document.getElementById('carouselCounter').style.display = 'none';
+        counterDiv.style.display = 'none';
+        stopCarousel();
         return;
     }
 
@@ -235,24 +240,19 @@ function updateUpcomingMeetings(meetings) {
 
     upcomingList.innerHTML = html;
     
-    // Show counter and update it
-    document.getElementById('carouselCounter').style.display = 'block';
-    updateCarouselControls();
+    // Show counter
+    counterDiv.style.display = 'block';
+    updateCarouselCounter();
     
-    // Start auto-advance carousel (change every 10 seconds)
-    startCarouselAutoAdvance();
-    
-    // Add touch/swipe support for carousel
-    attachCarouselGestures();
+    // Start carousel
+    if (totalMeetings > 1) {
+        startCarousel();
+    }
 }
 
-// Update carousel counter
-function updateCarouselControls() {
-    document.getElementById('currentCount').textContent = currentCarouselIndex + 1;
-    document.getElementById('totalCount').textContent = totalMeetings;
-}
-
-// Show specific carousel slide
+// ===========================
+// Carousel Functions
+// ===========================
 function showCarouselSlide(index) {
     if (index < 0 || index >= totalMeetings) return;
     
@@ -267,52 +267,63 @@ function showCarouselSlide(index) {
     });
     
     currentCarouselIndex = index;
-    updateCarouselControls();
+    updateCarouselCounter();
     
-    // Reset auto-advance timer
-    clearTimeout(carouselAutoAdvanceTimer);
-    startCarouselAutoAdvance();
-}
-
-// Navigate to next meeting automatically
-function autoAdvanceCarousel() {
-    const nextIndex = (currentCarouselIndex + 1) % totalMeetings;
-    showCarouselSlide(nextIndex);
-}
-
-// Start auto-advance carousel
-function startCarouselAutoAdvance() {
+    // Reset timer
+    stopCarousel();
     if (totalMeetings > 1) {
-        carouselAutoAdvanceTimer = setTimeout(autoAdvanceCarousel, 10000); // 10 seconds
+        startCarousel();
     }
 }
 
-// Attach touch/swipe gestures to carousel
-function attachCarouselGestures() {
+function updateCarouselCounter() {
+    document.getElementById('currentCount').textContent = currentCarouselIndex + 1;
+    document.getElementById('totalCount').textContent = totalMeetings;
+}
+
+function startCarousel() {
+    stopCarousel();
+    carouselTimer = setTimeout(() => {
+        const nextIndex = (currentCarouselIndex + 1) % totalMeetings;
+        showCarouselSlide(nextIndex);
+    }, CAROUSEL_AUTO_ADVANCE);
+}
+
+function stopCarousel() {
+    if (carouselTimer) {
+        clearTimeout(carouselTimer);
+        carouselTimer = null;
+    }
+}
+
+// ===========================
+// Touch Gestures
+// ===========================
+function attachSwipeGestures() {
     const upcomingList = document.getElementById('upcomingList');
     let touchStartX = 0;
     let touchEndX = 0;
 
     upcomingList.addEventListener('touchstart', (e) => {
         touchStartX = e.changedTouches[0].screenX;
-    }, false);
+    }, { passive: true });
 
     upcomingList.addEventListener('touchend', (e) => {
         touchEndX = e.changedTouches[0].screenX;
         handleSwipe();
-    }, false);
+    }, { passive: true });
 
     function handleSwipe() {
-        const swipeThreshold = 50; // Minimum distance to trigger swipe
+        const swipeThreshold = 50;
         const diff = touchStartX - touchEndX;
 
         if (Math.abs(diff) > swipeThreshold) {
             if (diff > 0) {
-                // Swiped left - go to next
+                // Swipe left - next
                 const nextIndex = (currentCarouselIndex + 1) % totalMeetings;
                 showCarouselSlide(nextIndex);
             } else {
-                // Swiped right - go to previous
+                // Swipe right - previous
                 const prevIndex = (currentCarouselIndex - 1 + totalMeetings) % totalMeetings;
                 showCarouselSlide(prevIndex);
             }
@@ -320,19 +331,20 @@ function attachCarouselGestures() {
     }
 }
 
-// Camera functions
+// ===========================
+// Camera Functions
+// ===========================
 async function enableCamera() {
     const cameraContainer = document.getElementById('cameraContainer');
     const cameraFeed = document.getElementById('cameraFeed');
 
-    // If camera is already active, don't reinitialize
+    // If camera already active, just show it
     if (cameraStream && cameraFeed.srcObject) {
         cameraContainer.style.display = 'block';
         return;
     }
 
     try {
-        // Request camera access
         cameraStream = await navigator.mediaDevices.getUserMedia({
             video: {
                 width: { ideal: 1280 },
@@ -344,10 +356,9 @@ async function enableCamera() {
         cameraFeed.srcObject = cameraStream;
         cameraContainer.style.display = 'block';
 
-        console.log('Camera enabled successfully');
+        console.log('Camera enabled');
     } catch (error) {
-        console.error('Error enabling camera:', error);
-        // Hide camera container if access fails
+        console.error('Camera access error:', error);
         cameraContainer.style.display = 'none';
     }
 }
@@ -357,7 +368,6 @@ function disableCamera() {
     const cameraFeed = document.getElementById('cameraFeed');
     
     if (cameraStream) {
-        // Stop all tracks
         cameraStream.getTracks().forEach(track => track.stop());
         cameraStream = null;
         cameraFeed.srcObject = null;
@@ -367,8 +377,18 @@ function disableCamera() {
     console.log('Camera disabled');
 }
 
-// Utility functions
-// Format date in IST timezone (Asia/Kolkata, GMT+5:30)
+// ===========================
+// Utility Functions
+// ===========================
+function setLoadingState() {
+    const statusIndicator = document.getElementById('statusIndicator');
+    statusIndicator.classList.add('loading');
+    statusIndicator.querySelector('.status-text').textContent = 'Loading...';
+    
+    const currentDisplay = document.getElementById('currentMeetingDisplay');
+    currentDisplay.innerHTML = '<div class="loading-message">Loading current meeting...</div>';
+}
+
 function formatDateIST(date, format) {
     const formatter = new Intl.DateTimeFormat('en-US', {
         timeZone: IST_TIMEZONE,
@@ -400,55 +420,37 @@ function formatDateIST(date, format) {
     return formatter.format(date);
 }
 
-// Utility functions
-// Parse a value that may be a Date, a string, or an Excel/Sheets serial number
 function parseDate(value) {
     if (!value && value !== 0) return new Date(NaN);
     if (value instanceof Date) return value;
     if (typeof value === 'number') {
-        // Convert Excel/Sheets serial to JS timestamp (approx)
-        // Excel epoch (days since 1899-12-30). This conversion covers common cases.
+        // Convert Excel/Sheets serial to JS timestamp
         return new Date(Math.round((value - 25569) * 86400 * 1000));
     }
-    // Fallback: try to construct Date from string
-    const d = new Date(value);
-    return d;
+    return new Date(value);
 }
 
-// Normalize a meeting row coming from the backend. Supports array rows in the order
-// [id, room, roomKey, title, start, end, bookedBy, note, participants, emailSent, createdBy, updatedBy, createdAt, updatedAt]
-// or an object with named properties.
 function normalizeMeeting(row) {
     if (!row) return null;
 
     if (Array.isArray(row)) {
-        const [id, room, roomKey, title, start, end, bookedBy, note, participants, emailSent, createdBy, updatedBy, createdAt, updatedAt] = row;
+        const [id, room, roomKey, title, start, end, bookedBy, note, participants] = row;
         return {
             id,
             room,
             roomKey,
             title: title || '',
-            startRaw: start,
-            endRaw: end,
             startDate: parseDate(start),
             endDate: parseDate(end),
             bookedBy: bookedBy || '',
             note: note || '',
-            participants: participants || '',
-            emailSent,
-            createdBy,
-            updatedBy,
-            createdAt,
-            updatedAt
+            participants: participants || ''
         };
     }
 
-    // If it's an object, try to read common fields
     return {
         ...row,
         title: row.title || row.Subject || '',
-        startRaw: row.start || row.startDate || row.start_time,
-        endRaw: row.end || row.endDate || row.end_time,
         startDate: parseDate(row.start || row.startDate || row.start_time),
         endDate: parseDate(row.end || row.endDate || row.end_time),
         bookedBy: row.bookedBy || row.booker || row.organizer || '',
@@ -460,7 +462,6 @@ function normalizeMeeting(row) {
 function formatTime(dateInput) {
     const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
     if (isNaN(date)) return '';
-    
     return formatDateIST(date, 'time-only');
 }
 
@@ -488,10 +489,11 @@ function displayError() {
     upcomingList.innerHTML = '<div class="no-upcoming">Unable to load schedule</div>';
 }
 
-// Clean up on page unload
+// ===========================
+// Cleanup
+// ===========================
 window.addEventListener('beforeunload', () => {
     disableCamera();
-    if (refreshTimer) {
-        clearInterval(refreshTimer);
-    }
+    if (refreshTimer) clearInterval(refreshTimer);
+    stopCarousel();
 });

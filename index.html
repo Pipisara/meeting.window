@@ -7,7 +7,7 @@
     <link rel="icon" href="logo.png" type="image/png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -30,16 +30,23 @@
         <!-- Main Content -->
         <main class="display-main">
             <!-- Current Meeting Section -->
-            <section class="current-meeting-section" id="currentMeetingSection">
-                <!-- Camera Feed (shown only during meetings) -->
-                <div class="camera-container" id="cameraContainer" style="display: none;">
-                    <video id="cameraFeed" autoplay playsinline></video>
-                    <div class="camera-label">Live</div>
+            <section class="current-meeting-section">
+                <div class="section-header">
+                    <h2 class="section-title">Current Meeting</h2>
                 </div>
+                
+                <div class="meeting-wrapper">
+                    <!-- Camera Feed -->
+                    <div class="camera-container" id="cameraContainer" style="display: none;">
+                        <video id="cameraFeed" autoplay playsinline></video>
+                        <div class="camera-label">
+                            <span class="record-indicator"></span>
+                            <span>LIVE</span>
+                        </div>
+                    </div>
 
-                <div class="current-meeting-content">
-                    <div class="section-title">Current Meeting</div>
-                    <div id="currentMeetingDisplay">
+                    <!-- Meeting Display -->
+                    <div class="current-meeting-content" id="currentMeetingDisplay">
                         <div class="no-meeting">
                             <div class="no-meeting-icon">✓</div>
                             <div class="no-meeting-text">Room Available</div>
@@ -51,14 +58,15 @@
 
             <!-- Upcoming Meetings Section -->
             <section class="upcoming-section">
-                <div class="section-title">Today's Schedule</div>
-                <div class="carousel-container">
-                    <div class="upcoming-list" id="upcomingList">
-                        <div class="loading-message">Loading schedule...</div>
-                    </div>
-                    <div class="carousel-counter" id="carouselCounter">
+                <div class="section-header">
+                    <h2 class="section-title">Today's Schedule</h2>
+                    <div class="carousel-counter" id="carouselCounter" style="display: none;">
                         <span id="currentCount">0</span> / <span id="totalCount">0</span>
                     </div>
+                </div>
+                
+                <div class="upcoming-list" id="upcomingList">
+                    <div class="loading-message">Loading schedule...</div>
                 </div>
             </section>
         </main>
@@ -66,8 +74,11 @@
         <!-- Footer -->
         <footer class="display-footer">
             <div class="footer-content">
-                <span>Last updated: <span id="lastUpdate">--</span></span>
-                <span>Basilur Tea Export © 2025</span>
+                <span class="footer-item">
+                    <span class="footer-label">Last updated:</span>
+                    <span class="footer-value" id="lastUpdate">--</span>
+                </span>
+                <span class="footer-brand">Basilur Tea Export © 2025</span>
             </div>
         </footer>
     </div>
